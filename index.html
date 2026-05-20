@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+  <title>Alien Star War: Hangar Progression</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/addons/p5.sound.min.js"></script>
+  <style>
+    body { padding: 0; margin: 0; overflow: hidden; background-color: #010103; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<script>
+  // --- ESTADOS DEL JUEGO ---
+  let estadoJuego = "MENU"; 
+
+  // --- VARIABLES DEL MOTOR ---
+  let jugador;
+  let proyectiles = [];
+  let laserEnemigos = [];
+  let enemigos = [];
+  let particulas = [];
+  let powerups = [];
+  let fondoEstrellas = [];
+  
+  let puntuacion = 0;
+  let nivelActual = 1;
+  let sacudidaPantalla = 0;
+  let jefeActual = null;
+  let jefeAparecido = false;
+
+  // Transición de hiperespacio
+  let tiempoContadorHiperespacio = 0;
+  let duracionHiperespacio = 5000; 
+  let creditosEntregadosEnEsteNivel = false;
+
+  // --- SISTEMA DE PROGRESIÓN Y HANGAR ---
+  let naveSeleccionada = 0;
+  let dificultadSeleccionada = 1; 
+  let listaDificultades = ["FÁCIL", "NORMAL", "PESADILLA"];
+  let multiplicadorDificultad = 1.0;
+
+  // Créditos del jugador (Guardado permanente)
+  let creditosEstelares = 0;
+
+  // Catálogo con precio de desbloqueo
+  const catalogoNaves = [
+    { nombre: "FÉNIX C-10", color: [40, 110, 230], vel: 6.8, escudoMax: 100, precio: 0, desc: "Caza de Asalto. Equilibrada en ala delta." },
+    { nombre: "TITÁN V-4", color: [90, 95, 105], vel: 4.5, escudoMax: 180, precio: 20, desc: "Acorazado Pesado. Chasis de amplio impacto." },
+    { nombre: "ESPECTRO X", color: [230, 165, 30], vel: 9.0, escudoMax: 70, precio: 40, desc: "Interceptor Estilete. Flecha de alta velocidad." },
+    { nombre: "PLASMA NOVA", color: [220, 30, 80], vel: 7.2, escudoMax: 110, precio: 60, desc: "Prototipo Exótico. Estructura en Y invertida." }
+  ];
+
+  // Registro de naves desbloqueadas (Fénix desbloqueada por defecto)
+  let navesDesbloqueadas = [true, false, false, false];
+
+  // --- MOTOR DE AUDIO ---
+  let oscAudio; 
+  let sintesMúsica = []; 
+  let secuenciaNota = [60, 63, 65, 67, 70, 67, 65, 63]; 
+  let indiceNota = 0;
+  let audioIniciado = false;
+
+  // Botones
+  let btnIzq, btnDer, btnDisp;
+  let btnNavePrev, btnNaveSig, btnDifPrev, btnDifSig, btnIniciar;
+
+  function setup() {
+    createCanvas(windowWidth, windowHeight);
+    
+    // Cargar persistencia de datos (Progreso guardado)
+    if (localStorage.getItem("creditosEstelares")) {
+      creditosEstelares = parseInt(localStorage.getItem("creditosEstelares"));
+    }
+    if (localStorage.getItem("navesDesbloqueadas")) {
+      navesDesbloqueadas = JSON.parse(localStorage.getItem("navesDesbloqueadas"));
+    }
+
+    oscAudio = new p5.Oscillator('sawtooth');
+    oscAudio.amp(0);
+    oscAudio.start();
+
+    sintesMúsica[0] = new p5.Oscillator('triangle');
+    sintesMúsica[0].amp(0);
+    sintesMúsica[0].start();
+    
+    sintesMúsica[1] = new p5.Oscillator('sawtooth');
+    sintesMúsica[1].amp(0);
+    sintesMúsica[1].start();
+    
+    for (let i = 0; i < 85; i++) {
+      fondoEstrellas.push({ 
+        x: random(width), 
+        y: random(height), 
+        velocidad: random(0.5, 4.0), 
+        tam: random(0.8, 3.2),
+        brillo: random(120, 255)
+      });
+    }
+
+    configurarBotones();
+  }
+
+  function draw() {
+    background(2, 2, 6);
+    
+    if (sacudidaPantalla > 0) {
+      translate(random(-sacudidaPantalla, sacudidaPantalla), random(-sacudidaPantalla, sacudidaPantalla));
+      sacudidaPantalla *= 0.85;
+    }
+
+    actualizarFondoDinamico();
+    gestionarMusica(); 
+
+    if (estadoJuego === "MENU") {
+      dibujarMenuHangar();
+    } else if (estadoJuego === "GAMEOVER") {
+      mostrarPantallaFin();
+    } else if (estadoJuego === "JUGANDO" || estadoJuego === "HIPERESPACIO") {
+      ejecutarLoopJuego();
+    }
+  }
+
+  function ejecutarLoopJuego() {
+    gestionarToques();
+
+    jugador.actualizar();
+    jugador.dibujar();
+
+    if (frameCount % 2 === 0) {
+      let c = catalogoNaves[naveSeleccionada].color;
+      let pCol = color(c[0], c[1], c[2]);
+      let fv = estadoJuego === "HIPERESPACIO" ? 3 : 1;
+
+      if (naveSeleccionada === 0 || naveSeleccionada === 2) { 
+        particulas.push(new Particula(jugador.x + 10, jugador.y + 24, pCol, random(-0.3, 0.3), random(1, 3) * fv));
+        particulas.push(new Particula(jugador.x + jugador.w - 10, jugador.y + 24, pCol, random(-0.3, 0.3), random(1, 3) * fv));
+      } else if (naveSeleccionada === 1) { 
+        particulas.push(new Particula(jugador.x + jugador.w/2, jugador.y + 28, color(255, 120, 0), random(-0.8, 0.8), random(2, 4) * fv));
+      } else { 
+        particulas.push(new Particula(jugador.x + jugador.w/2, jugador.y + 26, color(180, 30, 255), random(-0.2, 0.2), random(1.5, 3) * fv));
+      }
+    }
+
+    // --- LOGICA HIPERESPACIO ---
+    if (estadoJuego === "HIPERESPACIO") {
+      let tiempoTranscurrido = millis() - tiempoContadorHiperespacio;
+      let restante = Math.ceil((duracionHiperespacio - tiempoTranscurrido) / 1000);
+
+      // Recompensa única por pasar de nivel: +10 puntos/créditos
+      if (!creditosEntregadosEnEsteNivel) {
+        creditosEstelares += 10;
+        localStorage.setItem("creditosEstelares", creditosEstelares); // Guardar en navegador
+        creditosEntregadosEnEsteNivel = true;
+      }
+
+      push();
+      textAlign(CENTER, CENTER);
+      fill(0, 255, 200, 200 + sin(frameCount * 0.2) * 55);
+      textSize(26); textStyle(BOLD);
+      text("¡SECTOR LIMPIADO!", width / 2, height / 2 - 50);
+      
+      fill(255, 215, 0); textSize(18);
+      text("+10 CRÉDITOS ESTELARES OBTENIDOS", width / 2, height / 2 - 15);
+      
+      fill(255); textSize(15); textStyle(NORMAL);
+      text(`SALTANDO EN: ${restante}s`, width / 2, height / 2 + 25);
+      
+      stroke(0, 200, 255, 40); strokeWeight(2);
+      line(width/2, height/2, random(width), random(height));
+      pop();
+
+      if (tiempoTranscurrido >= duracionHiperespacio) {
+        nivelActual++;
+        jefeAparecido = false;
+        inicializarNivel();
+        estadoJuego = "JUGANDO";
+      }
+    }
+
+    // --- PROYECTILES ---
+    for (let i = proyectiles.length - 1; i >= 0; i--) {
+      proyectiles[i].actualizar();
+      proyectiles[i].dibujar();
+
+      if (proyectiles[i].fueraDePantalla()) {
+        proyectiles.splice(i, 1);
+        continue;
+      }
+
+      if (estadoJuego === "JUGANDO") {
+        for (let j = enemigos.length - 1; j >= 0; j--) {
+          if (proyectiles[i] && proyectiles[i].colisionaCon(enemigos[j])) {
+            let destruido = enemigos[j].recibirDanio();
+            proyectiles.splice(i, 1);
+            sacudidaPantalla = 3;
+
+            if (destruido) {
+              reproducirSonidoExplosion();
+              crearExplosionMetalica(enemigos[j].x + enemigos[j].w/2, enemigos[j].y + enemigos[j].h/2, enemigos[j].colorEfecto, 25);
+              sacudidaPantalla = 7;
+              puntuacion += Math.floor(50 * nivelActual * multiplicadorDificultad);
+
+              if (random(1) < 0.18) {
+                powerups.push(new PowerUp(enemigos[j].x + enemigos[j].w/2, enemigos[j].y));
+              }
+              enemigos.splice(j, 1);
+            } else {
+              reproducirSonidoImpacto();
+            }
+            break; 
+          }
+        }
+
+        if (jefeActual && proyectiles[i] && proyectiles[i].colisionaCon(jefeActual)) {
+          let jefeMuerto = jefeActual.recibirDanio();
+          proyectiles.splice(i, 1);
+          sacudidaPantalla = 4;
+          reproducirSonidoImpacto();
+
+          if (jefeMuerto) {
+            reproducirSonidoExplosion();
+            crearExplosionMetalica(jefeActual.x + jefeActual.w/2, jefeActual.y + jefeActual.h/2, jefeActual.colorEfecto, 65);
+            sacudidaPantalla = 30;
+            puntuacion += Math.floor(500 * nivelActual * multiplicadorDificultad);
+            
+            jefeActual = null;
+            estadoJuego = "HIPERESPACIO";
+            creditosEntregadosEnEsteNivel = false; 
+            tiempoContadorHiperespacio = millis(); 
+          }
+        }
+      }
+    }
+
+    // --- ENEMY LASERS & LOGIC ---
+    for (let i = laserEnemigos.length - 1; i >= 0; i--) {
+      laserEnemigos[i].actualizar();
+      laserEnemigos[i].dibujar();
+      if (laserEnemigos[i].fueraDePantalla()) { laserEnemigos.splice(i, 1); continue; }
+
+      if (laserEnemigos[i].colisionaConJugador(jugador)) {
+        jugador.escudo -= Math.floor(12 * multiplicadorDificultad); 
+        reproducirSonidoDanioJugador();
+        sacudidaPantalla = 12;
+        laserEnemigos.splice(i, 1);
+        if (jugador.escudo <= 0) { estadoJuego = "GAMEOVER"; reproducirSonidoDerrota(); }
+        continue;
+      }
+    }
+
+    if (estadoJuego === "JUGANDO") {
+      let cambiarDireccion = false;
+      for (let enemigo of enemigos) {
+        enemigo.actualizar();
+        enemigo.dibujar();
+        if (enemigo.tocaBorde()) cambiarDireccion = true;
+        if (random(1) < enemigo.probabilidadDisparo) enemigo.disparar();
+        if (enemigo.y + enemigo.h >= jugador.y) { estadoJuego = "GAMEOVER"; reproducirSonidoDerrota(); }
+      }
+      if (cambiarDireccion) { for (let enemigo of enemigos) enemigo.rebotar(); }
+
+      if (enemigos.length === 0 && !jefeAparecido) {
+        jefeActual = new JefeInvasor(width / 2 - 75, -120, nivelActual);
+        jefeAparecido = true;
+      }
+
+      if (jefeActual) {
+        jefeActual.actualizar();
+        jefeActual.dibujar();
+        if (random(1) < jefeActual.probabilidadDisparo) jefeActual.disparar();
+        if (jefeActual.y + jefeActual.h >= jugador.y) { estadoJuego = "GAMEOVER"; reproducirSonidoDerrota(); }
+      }
+    }
+
+    for (let i = powerups.length - 1; i >= 0; i--) {
+      powerups[i].actualizar(); powerups[i].dibujar();
+      if (powerups[i].colisionaConJugador(jugador)) {
+        reproducirSonidoPowerUp();
+        jugador.repararEscudo(Math.floor(35 / multiplicadorDificultad));
+        powerups.splice(i, 1); continue;
+      }
+      if (powerups[i].fueraDePantalla()) powerups.splice(i, 1);
+    }
+
+    for (let i = particulas.length - 1; i >= 0; i--) {
+      particulas[i].actualizar(); particulas[i].dibujar();
+      if (particulas[i].estaMuerta()) particulas.splice(i, 1);
+    }
+
+    resetMatrix(); 
+    dibujarUI();
+    dibujarBotonesUI();
+  }
+
+  // --- RENDERING DEL HANGAR CON BLOQUEO ---
+  function dibujarMenuHangar() {
+    push();
+    textAlign(CENTER, TOP);
+    fill(0, 195, 255); textSize(32); textStyle(BOLD);
+    text("ALIEN STAR WAR", width / 2, 45);
+    
+    // UI de Créditos Estelares globales
+    fill(255, 215, 0); textSize(15);
+    text(`✪ CRÉDITOS DISPONIBLES: ${creditosEstelares} PTS`, width / 2, 85);
+    
+    let nX = width / 2;
+    let nY = height * 0.28;
+    
+    fill(15, 45, 80, 100); ellipse(nX, nY + 45, 140, 24);
+    stroke(0, 215, 255, 90); strokeWeight(2); noFill(); ellipse(nX, nY + 45, 160, 32); noStroke();
+
+    let naveActual = catalogoNaves[naveSeleccionada];
+    let estaDesbloqueada = navesDesbloqueadas[naveSeleccionada];
+
+    push(); translate(nX, nY); scale(1.4);
+    if (estaDesbloqueada) {
+      dibujarEstructuraNave(naveSeleccionada, -27, -10);
+    } else {
+      // Dibujar silueta holográfica bloqueada en rojo/púrpura
+      push(); tint(255, 50, 50, 100);
+      dibujarEstructuraNave(naveSeleccionada, -27, -10);
+      pop();
+    }
+    pop();
+
+    // Candado visual si está bloqueada
+    if (!estaDesbloqueada) {
+      fill(255, 50, 70); textSize(14); textStyle(BOLD);
+      text(`🔒 BLOQUEADA (REQUIERE: ${naveActual.precio} PTS)`, width / 2, height * 0.42);
+    }
+
+    fill(255); textSize(22); textStyle(BOLD); text(naveActual.nombre, width / 2, height * 0.46);
+    fill(160); textSize(13); textStyle(NORMAL); text(naveActual.desc, width / 2, height * 0.50);
+    
+    fill(0, 255, 180); text(`BLINDAJE ESTRUCTURAL: ${naveActual.escudoMax} PTS`, width / 2, height * 0.53);
+    fill(255, 200, 0); text(`PROPULSIÓN: ${naveActual.vel} MACH`, width / 2, height * 0.56);
+
+    fill(20, 15, 35); rect(width/2 - 110, height * 0.63, 220, 45, 6);
+    fill(140, 150, 180); textSize(12); text("DIFICULTAD OPERATIVA", width/2, height * 0.60);
+    
+    let colorDif = [0, 255, 150];
+    if (dificultadSeleccionada === 1) colorDif = [255, 160, 0];
+    if (dificultadSeleccionada === 2) colorDif = [255, 40, 60];
+    fill(colorDif[0], colorDif[1], colorDif[2]); textSize(20); textStyle(BOLD);
+    text(listaDificultades[dificultadSeleccionada], width/2, height * 0.64);
+
+    textStyle(NORMAL);
+    fill(22, 28, 48); rect(btnNavePrev.x, btnNavePrev.y, btnNavePrev.w, btnNavePrev.h, 6);
+    rect(btnNaveSig.x, btnNaveSig.y, btnNaveSig.w, btnNaveSig.h, 6);
+    rect(btnDifPrev.x, btnDifPrev.y, btnDifPrev.w, btnDifPrev.h, 6);
+    rect(btnDifSig.x, btnDifSig.y, btnDifSig.w, btnDifSig.h, 6);
+    
+    // Cambiar comportamiento del botón de acción principal
+    if (estaDesbloqueada) {
+      fill(12, 175, 95); 
+    } else {
+      if (creditosEstelares >= naveActual.precio) fill(210, 140, 10); else fill(80, 40, 50);
+    }
+    rect(btnIniciar.x, btnIniciar.y, btnIniciar.w, btnIniciar.h, 10);
+
+    fill(255); textSize(14); textAlign(CENTER, CENTER);
+    text("◀ NAVE", btnNavePrev.x + btnNavePrev.w/2, btnNavePrev.y + btnNavePrev.h/2);
+    text("NAVE ▶", btnNaveSig.x + btnNaveSig.w/2, btnNaveSig.y + btnNaveSig.h/2);
+    text("◀ DIFIC", btnDifPrev.x + btnDifPrev.w/2, btnDifPrev.y + btnDifPrev.h/2);
+    text("DIFIC ▶", btnDifSig.x + btnDifSig.w/2, btnDifSig.y + btnDifSig.h/2);
+    
+    textSize(18); textStyle(BOLD); 
+    if (estaDesbloqueada) {
+      text("INICIAR VUELO", btnIniciar.x + btnIniciar.w/2, btnIniciar.y + btnIniciar.h/2);
+    } else {
+      if (creditosEstelares >= naveActual.precio) {
+        text("DESBLOQUEAR NAVE", btnIniciar.x + btnIniciar.w/2, btnIniciar.y + btnIniciar.h/2);
+      } else {
+        text("CRÉDITOS INSUFICIENTES", btnIniciar.x + btnIniciar.w/2, btnIniciar.y + btnIniciar.h/2);
+      }
+    }
+    pop();
+  }
+
+  // --- RENDERS GEOMÉTRICOS NAVES ---
+  function dibujarEstructuraNave(tipo, x, y) {
+    push(); translate(x, y); noStroke();
+    if (tipo === 0) {
+      fill(25, 60, 150); quad(0, 26, 27, 0, 54, 26, 27, 20); 
+      fill(45, 120, 245); triangle(12, 20, 27, 2, 42, 20); 
+      fill(10, 30, 80); rect(8, 20, 6, 6); rect(40, 20, 6, 6); 
+      fill(0, 230, 255); triangle(23, 6, 27, 14, 31, 6); 
+    } else if (tipo === 1) {
+      fill(60, 65, 75); beginShape(); vertex(8, 4); vertex(46, 4); vertex(54, 16); vertex(46, 28); vertex(8, 28); vertex(0, 16); endShape(CLOSE);
+      fill(110, 115, 125); rect(12, 8, 30, 16, 2); 
+      fill(180, 70, 0); rect(21, 26, 12, 4); 
+      fill(240, 40, 40); rect(6, 2, 4, 6); rect(44, 2, 4, 6); 
+      fill(80, 255, 180); rect(23, 11, 8, 5, 1); 
+    } else if (tipo === 2) {
+      fill(160, 110, 15); triangle(27, 0, 16, 28, 38, 28); 
+      fill(245, 195, 40); quad(16, 12, 0, 26, 12, 28, 22, 20); quad(38, 12, 54, 26, 42, 28, 32, 20); 
+      fill(0, 180, 255); rect(25, 6, 4, 10, 1); 
+    } else if (tipo === 3) {
+      fill(140, 20, 90); quad(20, 0, 34, 0, 44, 26, 10, 26); 
+      fill(255, 40, 100); triangle(10, 26, 0, 12, 18, 20); triangle(44, 26, 54, 12, 36, 20); 
+      let brilloCore = 160 + sin(frameCount * 0.4) * 95;
+      fill(190, 30, 255, brilloCore); ellipse(27, 14, 14, 14);
+      fill(255); ellipse(27, 14, 5, 5);
+    }
+    pop();
+  }
+
+  // --- MOTOR DE FONDO DINÁMICO ---
+  function actualizarFondoDinamico() {
+    noStroke(); fill(4, 3, 18, 35); rect(0, 0, width, height);
+
+    for (let estrella of fondoEstrellas) {
+      let modVelocidad = estadoJuego === "HIPERESPACIO" ? estrella.velocidad * 7.5 : estrella.velocidad;
+
+      if (estadoJuego === "MENU") {
+        fill(255, 255, 255, 150); estrella.y += modVelocidad * 0.25;
+      } else if (nivelActual === 1) {
+        fill(190, 240, 255, estrella.brillo); estrella.y += modVelocidad;
+      } else if (nivelActual === 2) {
+        fill(255, 90, 220, estrella.brillo); estrella.y += modVelocidad * 0.8;
+        estrella.x += sin(frameCount * 0.02 + estrella.y * 0.01) * 0.5;
+      } else {
+        fill(255, 210, 100, estrella.brillo); estrella.y += modVelocidad * 1.6;
+      }
+
+      if (estrella.y > height) { estrella.y = 0; estrella.x = random(width); }
+      if (estrella.x > width) estrella.x = 0;
+      if (estrella.x < 0) estrella.x = width;
+
+      if (estadoJuego === "HIPERESPACIO") {
+        stroke(200, 240, 255, 180); strokeWeight(estrella.tam * 0.6);
+        line(estrella.x, estrella.y, estrella.x, estrella.y + 22); noStroke();
+      } else {
+        ellipse(estrella.x, estrella.y, estrella.tam);
+      }
+    }
+  }
+
+  // --- AUDIO ENGINE ---
+  function gestionarMusica() {
+    if (!audioIniciado || estadoJuego === "GAMEOVER" || estadoJuego === "HIPERESPACIO") {
+      if (sintesMúsica[0]) { sintesMúsica[0].amp(0); sintesMúsica[1].amp(0); } return;
+    }
+    let tempoVel = (jefeActual || estadoJuego === "MENU") ? 8 : 13;
+    if (frameCount % tempoVel === 0) {
+      indiceNota = (indiceNota + 1) % secuenciaNota.length;
+      let notaActual = secuenciaNota[indiceNota];
+      let freqBajo = midiToFreq(notaActual - (estadoJuego === "MENU" ? 12 : 24));
+      sintesMúsica[0].freq(freqBajo); sintesMúsica[0].amp(0.18, 0.02); sintesMúsica[0].amp(0, tempoVel * 0.07);
+
+      if (frameCount % (tempoVel * 2) === 0) {
+        let freqArp = midiToFreq(notaActual + (jefeActual ? 12 : 0));
+        sintesMúsica[1].freq(freqArp); sintesMúsica[1].amp(0.05, 0.01); sintesMúsica[1].amp(0, 0.16);
+      }
+    }
+  }
+
+  function reproducirSonidoLaserJugador() { activarContextoAudio(); oscAudio.setType('sawtooth'); oscAudio.freq(680); oscAudio.amp(0.12, 0.01); oscAudio.freq(85, 0.08); oscAudio.amp(0, 0.08); }
+  function reproducirSonidoLaserEnemigo() { activarContextoAudio(); oscAudio.setType('triangle'); oscAudio.freq(160); oscAudio.amp(0.07, 0.01); oscAudio.freq(430, 0.12); oscAudio.amp(0, 0.12); }
+  function reproducirSonidoExplosion() { oscAudio.setType('square'); oscAudio.freq(90); oscAudio.amp(0.26, 0.01); oscAudio.freq(12, 0.4); oscAudio.amp(0, 0.4); }
+  function reproducirSonidoImpacto() { oscAudio.setType('square'); oscAudio.freq(360); oscAudio.amp(0.04, 0.01); oscAudio.amp(0, 0.03); }
+  function reproducirSonidoDanioJugador() { oscAudio.setType('sawtooth'); oscAudio.freq(65); oscAudio.amp(0.25, 0.01); oscAudio.freq(140, 0.12); oscAudio.amp(0, 0.12); }
+  function reproducirSonidoPowerUp() { oscAudio.setType('sine'); oscAudio.freq(360); oscAudio.amp(0.14, 0.01); oscAudio.freq(1150, 0.2); oscAudio.amp(0, 0.2); }
+  function reproducirSonidoDerrota() { oscAudio.setType('sawtooth'); oscAudio.freq(90); oscAudio.amp(0.3, 0.01); oscAudio.freq(15, 0.7); oscAudio.amp(0, 0.7); }
+  function activarContextoAudio() { if (!audioIniciado) { userStartAudio(); audioIniciado = true; } }
+
+  function crearExplosionMetalica(x, y, col, cant) { for (let i = 0; i < cant; i++) { particulas.push(new Particula(x, y, col, random(-4, 4), random(-4, 4))); } }
+
+  function inicializarNivel() {
+    enemigos = []; laserEnemigos = [];
+    let velocidadBase = (1.3 + (nivelActual * 0.3)) * multiplicadorDificultad;
+    let columnas = Math.floor(width / 75);
+    let filas = Math.min(2 + nivelActual, 4);
+    for (let i = 0; i < columnas - 1; i++) {
+      for (let j = 0; j < filas; j++) { enemigos.push(new EnemigoAlien(i * 72 + 40, j * 48 + 110, velocidadBase, nivelActual)); }
+    }
+  }
+
+  function comenzarJuego() {
+    if (dificultadSeleccionada === 0) multiplicadorDificultad = 0.7; 
+    if (dificultadSeleccionada === 1) multiplicadorDificultad = 1.1; 
+    if (dificultadSeleccionada === 2) multiplicadorDificultad = 1.7; 
+
+    puntuacion = 0; nivelActual = 1; jefeActual = null; jefeAparecido = false;
+    proyectiles = []; laserEnemigos = []; particulas = []; powerups = [];
+    jugador = new Jugador(catalogoNaves[naveSeleccionada]);
+    inicializarNivel();
+    estadoJuego = "JUGANDO";
+  }
+
+  function gestionarToques() {
+    jugador.setDireccion(0);
+    for (let t of touches) {
+      if (evaluarToque(t.x, t.y, btnIzq)) jugador.setDireccion(-1);
+      if (evaluarToque(t.x, t.y, btnDer)) jugador.setDireccion(1);
+    }
+  }
+
+  function touchStarted() {
+    activarContextoAudio();
+
+    if (estadoJuego === "MENU") {
+      for (let t of touches) {
+        if (evaluarToque(t.x, t.y, btnNavePrev)) { naveSeleccionada = (naveSeleccionada - 1 + catalogoNaves.length) % catalogoNaves.length; reproducirSonidoImpacto(); }
+        if (evaluarToque(t.x, t.y, btnNaveSig)) { naveSeleccionada = (naveSeleccionada + 1) % catalogoNaves.length; reproducirSonidoImpacto(); }
+        if (evaluarToque(t.x, t.y, btnDifPrev)) { dificultadSeleccionada = (dificultadSeleccionada - 1 + listaDificultades.length) % listaDificultades.length; reproducirSonidoImpacto(); }
+        if (evaluarToque(t.x, t.y, btnDifSig)) { dificultadSeleccionada = (dificultadSeleccionada + 1) % listaDificultades.length; reproducirSonidoImpacto(); }
+        
+        if (evaluarToque(t.x, t.y, btnIniciar)) { 
+          let naveTarget = catalogoNaves[naveSeleccionada];
+          if (navesDesbloqueadas[naveSeleccionada]) {
+            comenzarJuego();
+            reproducirSonidoPowerUp();
+          } else if (creditosEstelares >= naveTarget.precio) {
+            // Desbloquear nave consumiendo créditos
+            creditosEstelares -= naveTarget.precio;
+            navesDesbloqueadas[naveSeleccionada] = true;
+            localStorage.setItem("creditosEstelares", creditosEstelares);
+            localStorage.setItem("navesDesbloqueadas", JSON.stringify(navesDesbloqueadas));
+            reproducirSonidoPowerUp();
+          }
+        }
+      }
+    } else if (estadoJuego === "JUGANDO") {
+      for (let t of touches) { if (evaluarToque(t.x, t.y, btnDisp)) jugador.disparar(); }
+    } else if (estadoJuego === "GAMEOVER") {
+      estadoJuego = "MENU"; reproducirSonidoImpacto();
+    }
+    return false;
+  }
+
+  function evaluarToque(tx, ty, boton) { return (tx > boton.x && tx < boton.x + boton.w && ty > boton.y && ty < boton.y + boton.h); }
+
+  function configurarBotones() {
+    let altB = 46;
+    btnNavePrev = { x: width * 0.08, y: height * 0.25, w: 85, h: altB };
+    btnNaveSig  = { x: width * 0.92 - 85, y: height * 0.25, w: 85, h: altB };
+    btnDifPrev  = { x: width/2 - 110, y: height * 0.69, w: 100, h: 40 };
+    btnDifSig   = { x: width/2 + 10, y: height * 0.69, w: 100, h: 40 };
+    btnIniciar  = { x: width/2 - 110, y: height * 0.78, w: 220, h: 52 };
+
+    let altoBotonCombate = 75; let anchoBotonCombate = width / 3.6; let yBotones = height - altoBotonCombate - 25;
+    btnIzq = { x: 20, y: yBotones, w: anchoBotonCombate, h: altoBotonCombate };
+    btnDer = { x: 35 + anchoBotonCombate, y: yBotones, w: anchoBotonCombate, h: altoBotonCombate };
+    btnDisp = { x: width - anchoBotonCombate - 20, y: yBotones, w: anchoBotonCombate, h: altoBotonCombate };
+  }
+
+  function dibujarBotonesUI() {
+    if (estadoJuego !== "JUGANDO" && estadoJuego !== "HIPERESPACIO") return;
+    noStroke(); textSize(22); textAlign(CENTER, CENTER);
+    fill(24, 28, 42, 160); rect(btnIzq.x, btnIzq.y, btnIzq.w, btnIzq.h, 12); rect(btnDer.x, btnDer.y, btnDer.w, btnDer.h, 12);
+    fill(180, 32, 32, 170); rect(btnDisp.x, btnDisp.y, btnDisp.w, btnDisp.h, 12);
+    fill(195, 220, 250); text("◀", btnIzq.x + btnIzq.w / 2, btnIzq.y + btnIzq.h / 2); text("▶", btnDer.x + btnDer.w / 2, btnDer.y + btnDer.h / 2);
+    fill(255); text("⚡", btnDisp.x + btnDisp.w / 2, btnDisp.y + btnDisp.h / 2);
+  }
+
+  function dibujarUI() {
+    noStroke(); fill(210, 235, 255); textAlign(LEFT, TOP); textSize(14);
+    text(`SCORE: ${puntuacion}`, 25, 20);
+    
+    textAlign(RIGHT, TOP); fill(0, 255, 170);
+    text(`SECTOR: ${nivelActual}`, width - 25, 20);
+
+    fill(90, 110, 130); textSize(10); text("INTEGRIDAD CASCO", 140, 47);
+    fill(15, 20, 30); rect(25, 48, 100, 8, 2);
+    if (jugador.escudo > (jugador.escudoMax * 0.4)) fill(0, 210, 130); else fill(240, 45, 45);
+    rect(25, 48, map(jugador.escudo, 0, jugador.escudoMax, 0, 100), 8, 2);
+
+    if (jefeActual && estadoJuego === "JUGANDO") {
+      textAlign(CENTER, TOP); fill(255, 30, 60); textSize(12); text(`¡CRUCERO ENEMIGO DETECTADO!`, width / 2, 20);
+      fill(25, 8, 8); rect(width / 2 - 100, 38, 200, 11, 4);
+      fill(255, 10, 50); rect(width / 2 - 100, 38, map(jefeActual.vidaActual, 0, jefeActual.vidaMax, 0, 200), 11, 4);
+    }
+  }
+
+  function mostrarPantallaFin() {
+    textAlign(CENTER, CENTER); fill(255, 35, 35); textSize(34); textStyle(BOLD);
+    text("SISTEMA DESTRUIDO", width / 2, height / 2 - 40);
+    fill(190); textSize(16); textStyle(NORMAL);
+    text(`Puntuación final del sector: ${puntuacion}`, width / 2, height / 2 + 10);
+    textSize(13); fill(120); text("Toca la pantalla para volver al Hangar", width / 2, height / 2 + 60);
+  }
+
+  function windowResized() { resizeCanvas(windowWidth, windowHeight); configurarBotones(); }
+
+  // --- CLASES DEL ENTORNO ---
+  class Jugador {
+    constructor(datosNave) { 
+      this.w = 54; this.h = 28; this.velocidad = datosNave.vel; this.escudoMax = datosNave.escudoMax; this.escudo = this.escudoMax;
+      this.dir = 0; this.x = width / 2 - this.w / 2; this.y = height - 145;
+    }
+    setDireccion(d) { this.dir = d; }
+    actualizar() { this.x += this.dir * this.velocidad; this.x = constrain(this.x, 0, width - this.w); }
+    dibujar() { dibujarEstructuraNave(naveSeleccionada, this.x, this.y); }
+    disparar() {
+      if (estadoJuego !== "JUGANDO") return;
+      if (proyectiles.length < 25) {
+        reproducirSonidoLaserJugador();
+        if (naveSeleccionada === 0) { 
+          proyectiles.push(new Proyectil(this.x + 10, this.y, 0)); proyectiles.push(new Proyectil(this.x + this.w - 10, this.y, 0));
+        } else if (naveSeleccionada === 1) { 
+          proyectiles.push(new Proyectil(this.x + 6, this.y + 4, 0)); proyectiles.push(new Proyectil(this.x + this.w - 6, this.y + 4, 0)); proyectiles.push(new Proyectil(this.x + this.w / 2, this.y, 0, 14)); 
+        } else if (naveSeleccionada === 2) { 
+          proyectiles.push(new Proyectil(this.x + this.w/2, this.y, 0)); proyectiles.push(new Proyectil(this.x + 4, this.y, -1.8)); proyectiles.push(new Proyectil(this.x + this.w - 4, this.y, 1.8));   
+        } else { 
+          proyectiles.push(new Proyectil(this.x + this.w / 2, this.y, 0, 18));
+        }
+      }
+    }
+    repararEscudo(cant) { this.escudo = constrain(this.escudo + cant, 0, this.escudoMax); }
+  }
+
+  class EnemigoAlien {
+    constructor(x, y, velX, nivel) {
+      this.x = x; this.y = y; this.w = 46; this.h = 30; this.velX = velX;
+      let factorAtaque = dificultadSeleccionada === 2 ? 0.016 : (dificultadSeleccionada === 1 ? 0.008 : 0.004);
+      if (nivel === 1) { this.vidaMax = 1; this.colorEfecto = color(0, 255, 140); this.probabilidadDisparo = factorAtaque; } 
+      else if (nivel === 2) { this.vidaMax = 2; this.colorEfecto = color(185, 55, 255); this.probabilidadDisparo = factorAtaque * 1.3; } 
+      else { this.vidaMax = 3; this.colorEfecto = color(255, 115, 0); this.probabilidadDisparo = factorAtaque * 1.7; }
+      this.vidaActual = this.vidaMax;
+    }
+    actualizar() { this.x += this.velX; }
+    recibirDanio() { this.vidaActual--; return this.vidaActual <= 0; }
+    disparar() { laserEnemigos.push(new LaserEnemigo(this.x + this.w / 2, this.y + this.h)); reproducirSonidoLaserEnemigo(); }
+    dibujar() { push(); translate(this.x, this.y); noStroke(); fill(36, 42, 58); rect(0, 2, this.w, this.h - 4, 4); fill(this.colorEfecto); ellipse(this.w/2, this.h/2, 12, 12); pop(); }
+    tocaBorde() { return (this.x + this.w > width || this.x < 0); }
+    rebotar() { this.velX *= -1; this.y += 24; }
+  }
+
+  class JefeInvasor {
+    constructor(x, y, nivel) {
+      this.x = x; this.y = y; this.w = 155; this.h = 68; this.velX = 2.4 * multiplicadorDificultad;
+      this.vidaMax = Math.floor((15 + (nivel * 10)) * multiplicadorDificultad); this.vidaActual = this.vidaMax;
+      this.colorEfecto = color(255, 10, 65); this.probabilidadDisparo = 0.04 + (dificultadSeleccionada * 0.02);
+    }
+    actualizar() { if (this.y < 85) { this.y += 1.2; } else { this.x += this.velX; if (this.x + this.w > width || this.x < 0) { this.velX *= -1; this.y += 10; } } }
+    recibirDanio() { this.vidaActual--; return this.vidaActual <= 0; }
+    disparar() { reproducirSonidoLaserEnemigo(); laserEnemigos.push(new LaserEnemigo(this.x + 30, this.y + this.h, -1)); laserEnemigos.push(new LaserEnemigo(this.x + this.w - 30, this.y + this.h, 1)); }
+    dibujar() { push(); translate(this.x, this.y); noStroke(); fill(30, 32, 44); rect(10, 10, this.w - 20, this.h - 10, 8); fill(this.colorEfecto); ellipse(this.w/2, this.h/2, 22, 22); pop(); }
+  }
+
+  class Proyectil {
+    constructor(x, y, velX = 0, velY = 12) { this.x = x; this.y = y; this.w = 4; this.h = 14; this.velX = velX; this.velY = velY; }
+    actualizar() { this.y -= this.velY; this.x += this.velX; }
+    dibujar() { fill(0, 220, 255); rect(this.x - this.w/2, this.y, this.w, this.h, 2); }
+    fueraDePantalla() { return this.y < 0 || this.x < 0 || this.x > width; }
+    colisionaCon(entidad) { return (this.x > entidad.x && this.x < entidad.x + entidad.w && this.y > entidad.y && this.y < entidad.y + entidad.h); }
+  }
+
+  class LaserEnemigo {
+    constructor(x, y, velX = 0) { this.x = x; this.y = y; this.w = 4; this.h = 16; this.velY = 5.8 + dificultadSeleccionada; this.velX = velX; }
+    actualizar() { this.y += this.velY; this.x += this.velX; }
+    dibujar() { fill(255, 0, 70); rect(this.x - this.w/2, this.y, this.w, this.h, 2); }
+    fueraDePantalla() { return this.y > height || this.x < 0 || this.x > width; }
+    colisionaConJugador(j) { return (this.x > j.x && this.x < j.x + j.w && this.y > j.y && this.y < j.y + j.h); }
+  }
+
+  class PowerUp {
+    constructor(x, y) { this.x = x; this.y = y; this.radio = 10; this.vel = 2.4; }
+    actualizar() { this.y += this.vel; }
+    dibujar() { fill(0, 255, 140); ellipse(this.x, this.y, this.radio * 2); fill(255); textAlign(CENTER, CENTER); textSize(10); text("H", this.x, this.y); }
+    fueraDePantalla() { return this.y > height; }
+    colisionaConJugador(j) { return (this.x > j.x && this.x < j.x + j.w && this.y > j.y && this.y < j.y + j.h); }
+  }
+
+  class Particula {
+    constructor(x, y, col, vx, vy) { this.x = x; this.y = y; this.velX = vx; this.velY = vy; this.alfa = 255; this.colorP = col; this.tam = random(1.8, 5.8); }
+    actualizar() { this.x += this.velX; this.y += this.velY; this.alfa -= 8; }
+    dibujar() { this.colorP.setAlpha(this.alfa); fill(this.colorP); noStroke(); ellipse(this.x, this.y, this.tam); }
+    estaMuerta() { return this.alfa <= 0; }
+  }
+</script>
+
+</body>
+</html>
